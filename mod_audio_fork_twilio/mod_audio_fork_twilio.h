@@ -7,7 +7,6 @@
 
 #include <unistd.h>
 
-#define MY_BUG_NAME "audio_fork_twilio"
 #define MAX_BUG_LEN (64)
 #define MAX_SESSION_ID (256)
 #define MAX_WS_URL_LEN (512)
@@ -25,6 +24,7 @@
 #define EVENT_JSON            "mod_audio_fork_twilio::json"
 
 #define MAX_METADATA_LEN (8192)
+#define BUG_NAME "__mod_audio_fork_twilio"
 
 struct playout {
   char *file;
@@ -36,7 +36,6 @@ typedef void (*responseHandler_t)(switch_core_session_t* session, const char* ev
 struct private_data {
 	switch_mutex_t *mutex;
 	char sessionId[MAX_SESSION_ID];
-  char bugname[MAX_BUG_LEN+1];
   SpeexResamplerState *resampler;
   responseHandler_t responseHandler;
   void *pAudioPipe;

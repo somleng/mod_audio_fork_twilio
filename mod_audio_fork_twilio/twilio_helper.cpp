@@ -72,8 +72,9 @@ void TwilioHelper::stop(AudioPipe *pAudioPipe)
 
 void TwilioHelper::dtmf(AudioPipe *pAudioPipe, const char *digits)
 {
-  for (int i = 0; i < strlen(digits); i++)
-    dtmf_single(pAudioPipe, digits[i]);
+  std::string strDigits = std::string(digits);
+  for (int i = 0; i < strDigits.length(); i++)
+    dtmf_single(pAudioPipe, strDigits.at(i));
 }
 
 void TwilioHelper::dtmf_single(AudioPipe *pAudioPipe, char digit)

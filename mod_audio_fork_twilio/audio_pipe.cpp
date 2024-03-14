@@ -208,15 +208,16 @@ int AudioPipe::lws_callback(struct lws *wsi,
         // check for text frames to send
         {
           std::lock_guard<std::mutex> lk(ap->m_text_mutex);
-          if (ap->m_metadata.length() > 0) {
-            uint8_t buf[ap->m_metadata.length() + LWS_PRE];
-            memcpy(buf + LWS_PRE, ap->m_metadata.c_str(), ap->m_metadata.length());
-            int n = ap->m_metadata.length();
+          while (!ap->m_metadata.empty()) {
+            auto msg = ap->m_metadata.front();
+            uint8_t buf[msg.length() + LWS_PRE];
+            memcpy(buf + LWS_PRE, msg.c_str(), msg.length());
+            int n = msg.length();
             int m = lws_write(wsi, buf + LWS_PRE, n, LWS_WRITE_TEXT);
-            ap->m_metadata.clear();
             if (m < n) {
               return -1;
             }
+            ap->m_metadata.pop();
 
             // there may be audio data, but only one write per writeable event
             // get it next time
@@ -491,7 +492,7 @@ bool AudioPipe::deinitialize() {
 
 // instance members
 AudioPipe::AudioPipe(const char* uuid, const char* host, unsigned int port, const char* path,
-  int sslFlags, size_t bufLen, size_t minFreespace, const char* username, const char* password, char* bugname, notifyHandler_t callback) :
+  int sslFlags, size_t bufLen, size_t minFreespace, const char* username, const char* password, const char* bugname, notifyHandler_t callback) :
   m_uuid(uuid), m_host(host), m_port(port), m_path(path), m_sslFlags(sslFlags),
   m_audio_buffer_min_freespace(minFreespace), m_audio_buffer_max_len(bufLen), m_gracefulShutdown(false),
   m_audio_buffer_write_offset(LWS_PRE), m_recv_buf(nullptr), m_recv_buf_ptr(nullptr), m_bugname(bugname),
@@ -543,7 +544,7 @@ void AudioPipe::bufferForSending(const char* text) {
   if (m_state != LWS_CLIENT_CONNECTED) return;
   {
     std::lock_guard<std::mutex> lk(m_text_mutex);
-    m_metadata.append(text);
+    m_metadata.push(text);
   }
   addPendingWrite(this);
 }

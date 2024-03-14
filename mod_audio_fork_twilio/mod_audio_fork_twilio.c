@@ -28,56 +28,26 @@ static void responseHandler(switch_core_session_t *session, const char *eventNam
 	switch_event_fire(&event);
 }
 
-static switch_status_t digit_nomatch_action_callback(switch_ivr_dmachine_match_t *match)
+/*
+  dtmf handler function you can hook up to be executed when a digit is dialed during playback
+  if you return anything but SWITCH_STATUS_SUCCESS the playback will stop.
+*/
+static switch_status_t on_dtmf(switch_core_session_t *session, const switch_dtmf_t *dtmf, switch_dtmf_direction_t direction)
 {
-	switch_media_bug_t *bug = (switch_media_bug_t *)match->user_data;
-	switch_core_session_t *session = switch_core_media_bug_get_session(bug);
-	private_t *tech_pvt = (private_t *)switch_core_media_bug_get_user_data(bug);
-
-	switch_channel_t *channel;
-	switch_event_t *event;
-	switch_core_session_t *use_session = session;
-
-	switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_INFO, "Got digit_nomatch_action_callback for bug %s\n", tech_pvt->bugname);
-
-	if (switch_ivr_dmachine_get_target(match->dmachine) == DIGIT_TARGET_PEER)
+	switch_media_bug_t *bug;
+	switch_channel_t *channel = switch_core_session_get_channel(session);
+	if ((bug = (switch_media_bug_t *)switch_channel_get_private(channel, BUG_NAME)))
 	{
-		if (switch_core_session_get_partner(session, &use_session) != SWITCH_STATUS_SUCCESS)
+		private_t *tech_pvt = (private_t *)switch_core_media_bug_get_user_data(bug);
+		if (tech_pvt)
 		{
-			use_session = session;
+			char digits[2] = {0};
+			digits[0] = dtmf->digit;
+			fork_session_dtmf_text(session, BUG_NAME, digits);
 		}
+
+		return SWITCH_STATUS_FALSE;
 	}
-
-	channel = switch_core_session_get_channel(use_session);
-
-	switch_channel_set_variable(channel, "last_non_matching_digits", match->match_digits);
-
-	switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(use_session), SWITCH_LOG_DEBUG, "%s Digit NOT match binding [%s]\n",
-					  switch_channel_get_name(channel), match->match_digits);
-
-	// Send the dtmf into the twilio system
-	fork_session_dtmf_text(session, tech_pvt->bugname, match->match_digits);
-
-	if (switch_event_create_plain(&event, SWITCH_EVENT_CHANNEL_DATA) == SWITCH_STATUS_SUCCESS)
-	{
-		switch_event_add_header_string(event, SWITCH_STACK_BOTTOM, "digits", match->match_digits);
-
-		if (switch_core_session_queue_event(use_session, &event) != SWITCH_STATUS_SUCCESS)
-		{
-			switch_event_destroy(&event);
-			switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(use_session), SWITCH_LOG_WARNING, "%s event queue failure.\n",
-							  switch_core_session_get_name(use_session));
-		}
-	}
-
-	/* send it back around and skip the dmachine */
-	switch_channel_queue_dtmf_string(channel, match->match_digits);
-
-	if (use_session != session)
-	{
-		switch_core_session_rwunlock(use_session);
-	}
-
 	return SWITCH_STATUS_SUCCESS;
 }
 
@@ -87,13 +57,15 @@ static switch_bool_t capture_callback(switch_media_bug_t *bug, void *user_data, 
 	switch (type)
 	{
 	case SWITCH_ABC_TYPE_INIT:
+		switch_core_event_hook_add_recv_dtmf(session, on_dtmf);
 		break;
 
 	case SWITCH_ABC_TYPE_CLOSE:
 	{
-		private_t *tech_pvt = (private_t *)switch_core_media_bug_get_user_data(bug);
-		switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_INFO, "Got SWITCH_ABC_TYPE_CLOSE for bug %s\n", tech_pvt->bugname);
-		fork_session_cleanup(session, tech_pvt->bugname, NULL, 1);
+		switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_INFO, "Got SWITCH_ABC_TYPE_CLOSE for bug %s\n", BUG_NAME);
+		fork_session_cleanup(session, BUG_NAME, NULL, 1);
+
+		switch_core_event_hook_remove_recv_dtmf(session, on_dtmf);
 	}
 	break;
 
@@ -118,16 +90,13 @@ static switch_status_t start_capture(switch_core_session_t *session,
 									 int sslFlags,
 									 char *account_sid,
 									 char *call_sid,
-									 char *bugname,
+									 const char *bugname,
 									 char *metadata)
 {
 	switch_channel_t *channel = switch_core_session_get_channel(session);
 	switch_media_bug_t *bug;
 	switch_status_t status;
 	switch_codec_t *read_codec;
-	switch_digit_action_target_t target = DIGIT_TARGET_BOTH;
-	switch_ivr_dmachine_t *dmachine;
-	const char *terminators = NULL;
 
 	void *pUserData = NULL;
 	int channels = (flags & SMBF_STEREO) ? 2 : 1;
@@ -172,39 +141,11 @@ static switch_status_t start_capture(switch_core_session_t *session,
 		return SWITCH_STATUS_FALSE;
 	}
 
-	/**This part if from mod_dptools. It is code to setup to listen for dtmf events**/
-
-	if (!(dmachine = switch_core_session_get_dmachine(session, target)))
-	{
-		uint32_t digit_timeout = 1500;
-		uint32_t input_timeout = 0;
-		const char *var;
-
-		if ((var = switch_channel_get_variable(channel, "bind_digit_digit_timeout")))
-		{
-			digit_timeout = switch_atoul(var);
-		}
-
-		if ((var = switch_channel_get_variable(channel, "bind_digit_input_timeout")))
-		{
-			input_timeout = switch_atoul(var);
-		}
-
-		switch_ivr_dmachine_create(&dmachine, "TWILIO", NULL, digit_timeout, input_timeout, NULL, digit_nomatch_action_callback, bug);
-		switch_core_session_set_dmachine(session, dmachine, target);
-	}
-
-	if ((terminators = switch_channel_get_variable(channel, "bda_terminators")))
-	{
-		switch_ivr_dmachine_set_terminators(dmachine, terminators);
-	}
-	/***/
-
 	switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_DEBUG, "exiting start_capture.\n");
 	return SWITCH_STATUS_SUCCESS;
 }
 
-static switch_status_t do_stop(switch_core_session_t *session, char *bugname, char *text)
+static switch_status_t do_stop(switch_core_session_t *session, const char *bugname, char *text)
 {
 	switch_status_t status = SWITCH_STATUS_SUCCESS;
 
@@ -221,7 +162,7 @@ static switch_status_t do_stop(switch_core_session_t *session, char *bugname, ch
 	return status;
 }
 
-static switch_status_t do_pauseresume(switch_core_session_t *session, char *bugname, int pause)
+static switch_status_t do_pauseresume(switch_core_session_t *session, const char *bugname, int pause)
 {
 	switch_status_t status = SWITCH_STATUS_SUCCESS;
 
@@ -231,7 +172,7 @@ static switch_status_t do_pauseresume(switch_core_session_t *session, char *bugn
 	return status;
 }
 
-static switch_status_t do_graceful_shutdown(switch_core_session_t *session, char *bugname)
+static switch_status_t do_graceful_shutdown(switch_core_session_t *session, const char *bugname)
 {
 	switch_status_t status = SWITCH_STATUS_SUCCESS;
 
@@ -247,7 +188,7 @@ SWITCH_STANDARD_API(fork_function)
 	char *mycmd = NULL, *argv[7] = {0};
 	int argc = 0;
 	switch_status_t status = SWITCH_STATUS_FALSE;
-	char *bugname = MY_BUG_NAME;
+	const char *bugname = BUG_NAME;
 	char *account_sid = "";
 	char *call_sid = "";
 
@@ -277,34 +218,27 @@ SWITCH_STANDARD_API(fork_function)
 				char *text = NULL;
 				if (argc > 3)
 				{
-					bugname = argv[2];
+
 					text = argv[3];
 				}
 				else if (argc > 2)
 				{
 					if (argv[2][0] == '{' || argv[2][0] == '[')
 						text = argv[2];
-					else
-						bugname = argv[2];
 				}
 				status = do_stop(lsession, bugname, text);
 			}
 			else if (!strcasecmp(argv[1], "pause"))
 			{
-				if (argc > 2)
-					bugname = argv[2];
+
 				status = do_pauseresume(lsession, bugname, 1);
 			}
 			else if (!strcasecmp(argv[1], "resume"))
 			{
-				if (argc > 2)
-					bugname = argv[2];
 				status = do_pauseresume(lsession, bugname, 0);
 			}
 			else if (!strcasecmp(argv[1], "graceful-shutdown"))
 			{
-				if (argc > 2)
-					bugname = argv[2];
 				status = do_graceful_shutdown(lsession, bugname);
 			}
 			else if (!strcasecmp(argv[1], "start"))
@@ -319,21 +253,19 @@ SWITCH_STANDARD_API(fork_function)
 
 				if (argc > 4)
 				{
-					//account_sid = argv[3];
-					//call_sid = argv[4];
+					// account_sid = argv[3];
+					// call_sid = argv[4];
 				}
 
 				if (argc > 6)
 				{
-					bugname = argv[5];
 					metadata = argv[6];
 				}
 				else if (argc > 5)
 				{
 					if (argv[5][0] == '{' || argv[5][0] == '[')
 						metadata = argv[5];
-					else
-						bugname = argv[5];
+					
 				}
 
 				// Should always be mixed

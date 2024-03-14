@@ -249,7 +249,7 @@ namespace
   }
   switch_status_t fork_data_init(private_t *tech_pvt, switch_core_session_t *session, char *host,
                                  unsigned int port, char *path, int sslFlags, int sampling, int desiredSampling, int channels,
-                                 char *account_sid, char *call_sid, char *bugname, char *metadata, responseHandler_t responseHandler)
+                                 char *account_sid, char *call_sid, const char *bugname, char *metadata, responseHandler_t responseHandler)
   {
 
     const char *username = nullptr;
@@ -279,7 +279,6 @@ namespace
     tech_pvt->buffer_overrun_notified = 0;
     tech_pvt->audio_paused = 0;
     tech_pvt->graceful_shutdown = 0;
-    strncpy(tech_pvt->bugname, bugname, MAX_BUG_LEN);
     if (metadata)
       strncpy(tech_pvt->initialMetadata, metadata, MAX_METADATA_LEN);
 
@@ -526,7 +525,7 @@ extern "C"
     return SWITCH_STATUS_SUCCESS;
   }
 
-  switch_status_t fork_session_cleanup(switch_core_session_t *session, char *bugname, char *text, int channelIsClosing)
+  switch_status_t fork_session_cleanup(switch_core_session_t *session, const char *bugname, char *text, int channelIsClosing)
   {
     switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_DEBUG, "mod_audio_fork_twilio: fork_session_cleanup\n");
     switch_channel_t *channel = switch_core_session_get_channel(session);
@@ -587,9 +586,9 @@ extern "C"
     return SWITCH_STATUS_SUCCESS;
   }
 
-  switch_status_t fork_session_dtmf_text(switch_core_session_t *session, char *bugname, const char *match_digits)
+  switch_status_t fork_session_dtmf_text(switch_core_session_t *session, const char *bugname, const char *match_digits)
   {
-        switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_DEBUG, "mod_audio_fork_twilio: fork_session_dtmf_text\n");
+    switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_DEBUG, "mod_audio_fork_twilio: fork_session_dtmf_text\n");
 
     switch_channel_t *channel = switch_core_session_get_channel(session);
     switch_media_bug_t *bug = (switch_media_bug_t *)switch_channel_get_private(channel, bugname);
@@ -610,7 +609,7 @@ extern "C"
     return SWITCH_STATUS_SUCCESS;
   }
 
-  switch_status_t fork_session_pauseresume(switch_core_session_t *session, char *bugname, int pause)
+  switch_status_t fork_session_pauseresume(switch_core_session_t *session, const char *bugname, int pause)
   {
     switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_DEBUG, "mod_audio_fork_twilio: fork_session_pauseresume\n");
 
@@ -633,7 +632,7 @@ extern "C"
 
   switch_status_t fork_session_graceful_shutdown(switch_core_session_t *session, char *bugname)
   {
-        switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_DEBUG, "mod_audio_fork_twilio: fork_session_graceful_shutdown\n");
+    switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_DEBUG, "mod_audio_fork_twilio: fork_session_graceful_shutdown\n");
 
     switch_channel_t *channel = switch_core_session_get_channel(session);
     switch_media_bug_t *bug = (switch_media_bug_t *)switch_channel_get_private(channel, bugname);
@@ -663,7 +662,7 @@ extern "C"
 
   switch_bool_t fork_frame(switch_core_session_t *session, switch_media_bug_t *bug)
   {
-    ///switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_DEBUG, "mod_audio_fork_twilio: fork_frame\n");
+    /// switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_DEBUG, "mod_audio_fork_twilio: fork_frame\n");
 
     private_t *tech_pvt = (private_t *)switch_core_media_bug_get_user_data(bug);
     size_t inuse = 0;
@@ -714,49 +713,18 @@ extern "C"
             frame.buflen = available = pAudioPipe->binarySpaceAvailable();
           }
 
-          switch_status_t read_rv = SWITCH_STATUS_SUCCESS;
-          switch_status_t write_rv = SWITCH_STATUS_SUCCESS;
           // Process frame from callee
-          if (switch_core_media_bug_test_flag(bug, SMBF_READ_STREAM))
-          {
-            // This flag code is issolating the two streams from the bug
-            bool has_flag = switch_core_media_bug_test_flag(bug, SMBF_WRITE_STREAM);
-            switch_core_media_bug_clear_flag(bug, SMBF_WRITE_STREAM);
-
-            read_rv = switch_core_media_bug_read(bug, &frame, SWITCH_TRUE);
-            if (read_rv == SWITCH_STATUS_SUCCESS && frame.datalen)
-            {
-              // Frame for incoming stream
-              pTwilioHelper->audio(pAudioPipe, false, (int16_t *)frame.data, frame.datalen / 2);
-            }
-            if (has_flag)
-              switch_core_media_bug_set_flag(bug, SMBF_WRITE_STREAM);
-          }
-
-          // Process frame from caller
-          if (switch_core_media_bug_test_flag(bug, SMBF_WRITE_STREAM))
-          {
-            // This flag code is issolating the two streams from the bug
-            bool has_flag = switch_core_media_bug_test_flag(bug, SMBF_READ_STREAM);
-            switch_core_media_bug_clear_flag(bug, SMBF_READ_STREAM);
-
-            write_rv = switch_core_media_bug_read(bug, &frame, SWITCH_TRUE);
-            if (write_rv == SWITCH_STATUS_SUCCESS && frame.datalen)
-            {
-              // Frame for outgoing stream
-              pTwilioHelper->audio(pAudioPipe, false, (int16_t*)frame.data, frame.datalen / 2);
-            }
-            if (has_flag)
-              switch_core_media_bug_set_flag(bug, SMBF_READ_STREAM);
-          }
-
-          if (read_rv == SWITCH_STATUS_SUCCESS || write_rv == SWITCH_STATUS_SUCCESS)
+          switch_status_t rv = switch_core_media_bug_read(bug, &frame, SWITCH_TRUE);
+          if (rv != SWITCH_STATUS_SUCCESS)
             break;
+          if (frame.datalen)
+          {
+            // Frame for incoming stream
+            pTwilioHelper->audio(pAudioPipe, true, (int16_t *)frame.data, frame.datalen / 2);
+          }
         }
       }
-      /*
-
-      else //This part is for when the audio is resampled TODO
+      else
       {
         uint8_t data[SWITCH_RECOMMENDED_BUFFER_SIZE];
         switch_frame_t frame = {0};
@@ -779,19 +747,12 @@ extern "C"
             {
               // Note because ther binaryWritePtrAdd is not called here the audio data is store in a temporary way and each call will overrite the previous call.
               // It is basically using the AudioPipe as a temporay buffer for the transformed frame.
-
               // Data will be at pAudioPipe->binaryWritePtr() + output_len. L16 format
-              switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_DEBUG, "(%u) audio data - received %d message 2 \n", tech_pvt->id, out_len);
-              auto packet = twilio_build_audio_packet();
-              pAudioPipe->bufferForSending(packet.c_str());
-              // bytes written = num samples * 2 * num channels
 
-              /*
+              // bytes written = num samples * 2 * num channels
               size_t bytes_written = out_len << tech_pvt->channels;
-              pAudioPipe->binaryWritePtrAdd(bytes_written);
+              pTwilioHelper->audio(pAudioPipe, true, (int16_t *)pAudioPipe->binaryWritePtr(), bytes_written / 2);
               available = pAudioPipe->binarySpaceAvailable();
-              dirty = true;
-              * /
             }
             if (available < pAudioPipe->binaryMinSpace())
             {
@@ -807,7 +768,6 @@ extern "C"
           }
         }
       }
-      */
 
       pAudioPipe->unlockAudioBuffer();
       switch_mutex_unlock(tech_pvt->mutex);
