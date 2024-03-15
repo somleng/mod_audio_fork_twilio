@@ -11,6 +11,8 @@ using namespace std::chrono;
 
 TwilioHelper::TwilioHelper(const char *uuid, char *account_sid, char *call_sid) : m_stream_sid(uuid), m_account_sid(account_sid), m_call_sid(call_sid)
 {
+  m_isstart = true;
+  m_isstop = false;
 }
 
 void TwilioHelper::connect(AudioPipe *pAudioPipe)
@@ -33,6 +35,7 @@ void TwilioHelper::start(AudioPipe *pAudioPipe)
   auto seq = get_incr_seq_num();
   m_stream_start = duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count();
   m_isstart = true;
+  m_isstop = false;
 
   std::stringstream json;
   json << R"({"event": "start",)";
@@ -57,6 +60,7 @@ void TwilioHelper::stop(AudioPipe *pAudioPipe)
     return;
   if (m_isstart && !m_isstop)
   {
+    m_isstart = false;
     m_isstop = true;
     auto seq = get_incr_seq_num();
     std::stringstream json;
@@ -140,12 +144,14 @@ void TwilioHelper::audio(AudioPipe *pAudioPipe, bool inbound, int16_t *samples, 
 
 unsigned int TwilioHelper::get_incr_seq_num()
 {
-  // Todo needs locking
-  return m_seq_num++;
+  std::lock_guard<std::mutex> lk(m_seq_mutex);
+  auto seq = m_seq_num++;
+  return seq;
 }
 
 unsigned int TwilioHelper::get_incr_chunk_num(bool inbound)
 {
-  // Todo needs locking
-  return m_chunk_num[inbound ? 0 : 1]++;
+  std::lock_guard<std::mutex> lk(m_seq_mutex);
+  auto chunk = m_chunk_num[inbound ? 0 : 1]++;
+  return chunk;
 }

@@ -1,0 +1,3 @@
+[submodule "mod_audio_fork_twilio/libs/lockfree"]
+	path = mod_audio_fork_twilio/libs/lockfree
+	url = https://github.com/DNedic/lockfree.git

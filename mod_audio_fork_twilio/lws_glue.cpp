@@ -41,136 +41,37 @@ namespace
     cJSON *json = parse_json(session, msg, type);
     if (json)
     {
-      switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_DEBUG, "(%u) processIncomingMessage - received %s message\n", tech_pvt->id, type.c_str());
-      cJSON *jsonData = cJSON_GetObjectItem(json, "data");
-
-      const char *s = "{'recieve': 'true'}";
-      char aok[256];
-      memcpy(aok, s, strlen(s));
-      tech_pvt->responseHandler(session, EVENT_JSON, aok);
-
-      if (0 == type.compare("playAudio"))
+      if (0 == type.compare("media"))
       {
+        cJSON *jsonData = cJSON_GetObjectItem(json, "media");
         if (jsonData)
         {
-          // dont send actual audio bytes in event message
-          cJSON *jsonFile = NULL;
-          cJSON *jsonAudio = cJSON_DetachItemFromObject(jsonData, "audioContent");
-          int validAudio = (jsonAudio && NULL != jsonAudio->valuestring);
-
-          const char *szAudioContentType = cJSON_GetObjectCstr(jsonData, "audioContentType");
-          char fileType[6];
-          int sampleRate = 16000;
-          if (0 == strcmp(szAudioContentType, "raw"))
+          const char *payload = cJSON_GetObjectCstr(jsonData, "payload");
+          if (payload)
           {
-            cJSON *jsonSR = cJSON_GetObjectItem(jsonData, "sampleRate");
-            sampleRate = jsonSR && jsonSR->valueint ? jsonSR->valueint : 0;
-
-            switch (sampleRate)
+            std::string rawAudio = drachtio::base64_decode(payload);
+            AudioPipe *pAudioPipe = static_cast<AudioPipe *>(tech_pvt->pAudioPipe);
+            pAudioPipe->lockAudioBuffer();
+            size_t available = pAudioPipe->binaryReadSpaceAvailable();
+            int num_samples_8 = rawAudio.length();
+            if (num_samples_8 <= (available * 2))
             {
-            case 8000:
-              strcpy(fileType, ".r8");
-              break;
-            case 16000:
-              strcpy(fileType, ".r16");
-              break;
-            case 24000:
-              strcpy(fileType, ".r24");
-              break;
-            case 32000:
-              strcpy(fileType, ".r32");
-              break;
-            case 48000:
-              strcpy(fileType, ".r48");
-              break;
-            case 64000:
-              strcpy(fileType, ".r64");
-              break;
-            default:
-              strcpy(fileType, ".r16");
-              break;
+              for (int i = 0; i < num_samples_8; i++)
+              {
+                int16_t sample = ulaw_to_linear(rawAudio.at(i));
+                uint8_t buf[2];
+                memcpy(buf, &sample, sizeof(int16_t));
+                pAudioPipe->binaryReadPush(buf, sizeof(int16_t));
+              }
             }
+            else
+            {
+              switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_ERROR, "(%u) dropping incoming packets!\n",
+                                tech_pvt->id);
+            }
+            pAudioPipe->unlockAudioBuffer();
           }
-          else if (0 == strcmp(szAudioContentType, "wave") || 0 == strcmp(szAudioContentType, "wav"))
-          {
-            strcpy(fileType, ".wav");
-          }
-          else
-          {
-            validAudio = 0;
-            switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_DEBUG, "(%u) processIncomingMessage - unsupported audioContentType: %s\n", tech_pvt->id, szAudioContentType);
-          }
-
-          if (validAudio)
-          {
-            char szFilePath[256];
-
-            std::string rawAudio = drachtio::base64_decode(jsonAudio->valuestring);
-            switch_snprintf(szFilePath, 256, "%s%s%s_%d.tmp%s", SWITCH_GLOBAL_dirs.temp_dir,
-                            SWITCH_PATH_SEPARATOR, tech_pvt->sessionId, playCount++, fileType);
-            std::ofstream f(szFilePath, std::ofstream::binary);
-            f << rawAudio;
-            f.close();
-
-            // add the file to the list of files played for this session, we'll delete when session closes
-            struct playout *playout = (struct playout *)malloc(sizeof(struct playout));
-            playout->file = (char *)malloc(strlen(szFilePath) + 1);
-            strcpy(playout->file, szFilePath);
-            playout->next = tech_pvt->playout;
-            tech_pvt->playout = playout;
-
-            jsonFile = cJSON_CreateString(szFilePath);
-            cJSON_AddItemToObject(jsonData, "file", jsonFile);
-          }
-
-          char *jsonString = cJSON_PrintUnformatted(jsonData);
-          tech_pvt->responseHandler(session, EVENT_PLAY_AUDIO, jsonString);
-          free(jsonString);
-          if (jsonAudio)
-            cJSON_Delete(jsonAudio);
         }
-        else
-        {
-          switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "(%u) processIncomingMessage - missing data payload in playAudio request\n", tech_pvt->id);
-        }
-      }
-      else if (0 == type.compare("killAudio"))
-      {
-        tech_pvt->responseHandler(session, EVENT_KILL_AUDIO, NULL);
-
-        // kill any current playback on the channel
-        switch_channel_t *channel = switch_core_session_get_channel(session);
-        switch_channel_set_flag_value(channel, CF_BREAK, 2);
-      }
-      else if (0 == type.compare("transcription"))
-      {
-        char *jsonString = cJSON_PrintUnformatted(jsonData);
-        tech_pvt->responseHandler(session, EVENT_TRANSCRIPTION, jsonString);
-        free(jsonString);
-      }
-      else if (0 == type.compare("transfer"))
-      {
-        char *jsonString = cJSON_PrintUnformatted(jsonData);
-        tech_pvt->responseHandler(session, EVENT_TRANSFER, jsonString);
-        free(jsonString);
-      }
-      else if (0 == type.compare("disconnect"))
-      {
-        char *jsonString = cJSON_PrintUnformatted(jsonData);
-        tech_pvt->responseHandler(session, EVENT_DISCONNECT, jsonString);
-        free(jsonString);
-      }
-      else if (0 == type.compare("error"))
-      {
-        char *jsonString = cJSON_PrintUnformatted(jsonData);
-        tech_pvt->responseHandler(session, EVENT_ERROR, jsonString);
-        free(jsonString);
-      }
-      else if (0 == type.compare("json"))
-      {
-        char *jsonString = cJSON_PrintUnformatted(json);
-        tech_pvt->responseHandler(session, EVENT_JSON, jsonString);
-        free(jsonString);
       }
       else
       {
@@ -189,6 +90,7 @@ namespace
     switch_core_session_t *session = switch_core_session_locate(sessionId);
     if (session)
     {
+      switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_INFO, "eventCallback %d\n", event);
       switch_channel_t *channel = switch_core_session_get_channel(session);
       switch_media_bug_t *bug = (switch_media_bug_t *)switch_channel_get_private(channel, bugname);
       if (bug)
@@ -273,7 +175,6 @@ namespace
     strncpy(tech_pvt->path, path, MAX_PATH_LEN);
     tech_pvt->sampling = desiredSampling;
     tech_pvt->responseHandler = responseHandler;
-    tech_pvt->playout = NULL;
     tech_pvt->channels = channels;
     tech_pvt->id = ++idxCallCount;
     tech_pvt->buffer_overrun_notified = 0;
@@ -307,6 +208,10 @@ namespace
 
     if (desiredSampling != sampling)
     {
+      // TODO
+      switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_ERROR, "Resampling not permitted:.\n");
+      return SWITCH_STATUS_FALSE;
+
       switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_DEBUG, "(%u) resampling from %u to %u\n", tech_pvt->id, sampling, desiredSampling);
       tech_pvt->resampler = speex_resampler_init(channels, sampling, desiredSampling, SWITCH_RESAMPLE_QUALITY, &err);
       if (0 != err)
@@ -560,17 +465,6 @@ extern "C"
       }
     }
 
-    // delete any temp files
-    struct playout *playout = tech_pvt->playout;
-    while (playout)
-    {
-      std::remove(playout->file);
-      free(playout->file);
-      struct playout *tmp = playout;
-      playout = playout->next;
-      free(tmp);
-    }
-
     if (pAudioPipe && pTwilioHelper)
     {
       pTwilioHelper->stop(pAudioPipe);
@@ -662,8 +556,6 @@ extern "C"
 
   switch_bool_t fork_frame(switch_core_session_t *session, switch_media_bug_t *bug)
   {
-    /// switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_DEBUG, "mod_audio_fork_twilio: fork_frame\n");
-
     private_t *tech_pvt = (private_t *)switch_core_media_bug_get_user_data(bug);
     size_t inuse = 0;
     bool dirty = false;
@@ -688,7 +580,7 @@ extern "C"
       }
 
       pAudioPipe->lockAudioBuffer();
-      size_t available = pAudioPipe->binarySpaceAvailable();
+      size_t available = pAudioPipe->binaryWriteSpaceAvailable();
       if (NULL == tech_pvt->resampler)
       {
         switch_frame_t frame = {0};
@@ -698,7 +590,7 @@ extern "C"
         {
 
           // check if buffer would be overwritten; dump packets if so
-          if (available < pAudioPipe->binaryMinSpace())
+          if (available < pAudioPipe->binaryWriteMinSpace())
           {
             if (!tech_pvt->buffer_overrun_notified)
             {
@@ -710,7 +602,7 @@ extern "C"
             pAudioPipe->binaryWritePtrResetToZero();
 
             frame.data = pAudioPipe->binaryWritePtr();
-            frame.buflen = available = pAudioPipe->binarySpaceAvailable();
+            frame.buflen = available = pAudioPipe->binaryWriteSpaceAvailable();
           }
 
           // Process frame from callee
@@ -752,9 +644,9 @@ extern "C"
               // bytes written = num samples * 2 * num channels
               size_t bytes_written = out_len << tech_pvt->channels;
               pTwilioHelper->audio(pAudioPipe, true, (int16_t *)pAudioPipe->binaryWritePtr(), bytes_written / 2);
-              available = pAudioPipe->binarySpaceAvailable();
+              available = pAudioPipe->binaryWriteSpaceAvailable();
             }
-            if (available < pAudioPipe->binaryMinSpace())
+            if (available < pAudioPipe->binaryWriteSpaceAvailable())
             {
               if (!tech_pvt->buffer_overrun_notified)
               {
@@ -766,6 +658,36 @@ extern "C"
               break;
             }
           }
+        }
+      }
+
+      pAudioPipe->unlockAudioBuffer();
+      switch_mutex_unlock(tech_pvt->mutex);
+    }
+    return SWITCH_TRUE;
+  }
+
+  switch_bool_t fork_write_audio(switch_core_session_t *session, switch_media_bug_t *bug)
+  {
+    switch_frame_t *frame;
+    private_t *tech_pvt = (private_t *)switch_core_media_bug_get_user_data(bug);
+    AudioPipe *pAudioPipe = static_cast<AudioPipe *>(tech_pvt->pAudioPipe);
+    if (!tech_pvt || tech_pvt->audio_paused || tech_pvt->graceful_shutdown || !pAudioPipe)
+      return SWITCH_TRUE;
+
+    if (pAudioPipe->binaryReadPtrCount() == 0)
+      return SWITCH_TRUE;
+
+    if (switch_mutex_trylock(tech_pvt->mutex) == SWITCH_STATUS_SUCCESS)
+    {
+      pAudioPipe->lockAudioBuffer();
+      frame = switch_core_media_bug_get_write_replace_frame(bug);
+      if (frame)
+      {
+        auto num_samples = pAudioPipe->binaryReadPop((uint8_t *)frame->data, frame->datalen);
+        if (num_samples > 0)
+        {
+          switch_core_media_bug_set_write_replace_frame(bug, frame);
         }
       }
 

@@ -45,7 +45,6 @@ struct private_data {
   unsigned int port;
   char path[MAX_PATH_LEN];
   int sampling;
-  struct playout* playout;
   int  channels;
   unsigned int id;
   int buffer_overrun_notified:1;

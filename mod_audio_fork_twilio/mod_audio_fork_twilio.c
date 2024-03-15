@@ -72,8 +72,10 @@ static switch_bool_t capture_callback(switch_media_bug_t *bug, void *user_data, 
 	case SWITCH_ABC_TYPE_READ:
 		return fork_frame(session, bug);
 		break;
+	case SWITCH_ABC_TYPE_WRITE_REPLACE:
+		return fork_write_audio(session, bug);
+		break;
 
-	case SWITCH_ABC_TYPE_WRITE:
 	default:
 		break;
 	}
@@ -265,11 +267,12 @@ SWITCH_STANDARD_API(fork_function)
 				{
 					if (argv[5][0] == '{' || argv[5][0] == '[')
 						metadata = argv[5];
-					
 				}
 
 				// Should always be mixed
 				flags |= SMBF_WRITE_STREAM;
+				flags |= SMBF_READ_REPLACE;
+				flags |= SMBF_WRITE_REPLACE;
 				sampling = 8000;
 
 				if (!parse_ws_uri(channel, argv[2], &host[0], &path[0], &port, &sslFlags))

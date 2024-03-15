@@ -22,7 +22,7 @@ public:
   void dtmf(AudioPipe *pAudioPipe, const char *digits);
   void dtmf_single(AudioPipe *pAudioPipe, char digit);
   void mark(AudioPipe *pAudioPipe, std::string name);
-  void audio(AudioPipe *pAudioPipe, bool inbound, int16_t * samples, int num_samples);
+  void audio(AudioPipe *pAudioPipe, bool inbound, int16_t *samples, int num_samples);
 
 private:
   unsigned int get_incr_seq_num();
@@ -38,6 +38,8 @@ private:
 
   bool m_isstart;
   bool m_isstop;
+
+  std::mutex m_seq_mutex;
 };
 
 #endif
