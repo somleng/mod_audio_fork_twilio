@@ -634,6 +634,47 @@ size_t AudioPipe::binaryReadPop(uint8_t *data, size_t len)
   if (olen > 0)
   {
     m_audio_buffer_in.Read(data, olen);
+
+    for (int i = 0; i < m_marks.size(); i++)
+    {
+      m_marks[i].buffer_index -= olen;
+      if (m_marks[i].buffer_index < 0)
+        m_marks[i].buffer_index = 0;
+    }
   }
   return olen;
+}
+
+void AudioPipe::binaryReadClear()
+{
+  m_audio_buffer_in.Skip(m_audio_buffer_in.GetAvailable());
+  for (int i = 0; i < m_marks.size(); i++)
+  {
+    m_marks[i].buffer_index = 0;
+  }
+}
+
+void AudioPipe::binaryReadMark(std::string name)
+{
+  audio_mark_t mark;
+  mark.name = name;
+  mark.buffer_index = m_audio_buffer_in.GetAvailable();
+  m_marks.push_back(mark);
+}
+
+std::vector<std::string> AudioPipe::clearExpiredMarks()
+{
+  std::vector<std::string> returnValue;
+  auto it = std::begin(m_marks);
+  while (it != std::end(m_marks))
+  {
+    if (it->buffer_index <= 0)
+    {
+      returnValue.push_back(it->name);
+      it = m_marks.erase(it);
+    }
+    else
+      ++it;
+  }
+  return returnValue;
 }

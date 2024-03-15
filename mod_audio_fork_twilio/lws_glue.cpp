@@ -73,6 +73,39 @@ namespace
           }
         }
       }
+      else if (0 == type.compare("mark"))
+      {
+        cJSON *jsonData = cJSON_GetObjectItem(json, "mark");
+        if (jsonData)
+        {
+          const char *name = cJSON_GetObjectCstr(jsonData, "name");
+          if (name)
+          {
+            AudioPipe *pAudioPipe = static_cast<AudioPipe *>(tech_pvt->pAudioPipe);
+            if (pAudioPipe != nullptr)
+            {
+              pAudioPipe->lockAudioBuffer();
+              pAudioPipe->binaryReadMark(name);
+              pAudioPipe->unlockAudioBuffer();
+            }
+          }
+        }
+      }
+      else if (0 == type.compare("clear"))
+      {
+        AudioPipe *pAudioPipe = static_cast<AudioPipe *>(tech_pvt->pAudioPipe);
+        TwilioHelper *pTwilioHelper = static_cast<TwilioHelper *>(tech_pvt->pTwilioHelper);
+        if (pAudioPipe != nullptr && pTwilioHelper != nullptr)
+        {
+          pAudioPipe->lockAudioBuffer();
+          pAudioPipe->binaryReadClear();
+          auto marks = pAudioPipe->clearExpiredMarks();
+          for (int i = 0; i < marks.size(); i++)
+            pTwilioHelper->mark(pAudioPipe, marks[i]);
+
+          pAudioPipe->unlockAudioBuffer();
+        }
+      }
       else
       {
         switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "(%u) processIncomingMessage - unsupported msg type %s\n", tech_pvt->id, type.c_str());
@@ -90,7 +123,6 @@ namespace
     switch_core_session_t *session = switch_core_session_locate(sessionId);
     if (session)
     {
-      switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_INFO, "eventCallback %d\n", event);
       switch_channel_t *channel = switch_core_session_get_channel(session);
       switch_media_bug_t *bug = (switch_media_bug_t *)switch_channel_get_private(channel, bugname);
       if (bug)
@@ -688,6 +720,14 @@ extern "C"
         if (num_samples > 0)
         {
           switch_core_media_bug_set_write_replace_frame(bug, frame);
+
+          TwilioHelper *pTwilioHelper = static_cast<TwilioHelper *>(tech_pvt->pTwilioHelper);
+          if (pTwilioHelper)
+          {
+            auto marks = pAudioPipe->clearExpiredMarks();
+            for (int i = 0; i < marks.size(); i++)
+              pTwilioHelper->mark(pAudioPipe, marks[i]);
+          }
         }
       }
 

@@ -90,6 +90,9 @@ public:
 
   void binaryReadPush(uint8_t *data, size_t len);
   size_t binaryReadPop(uint8_t *data, size_t len);
+  void binaryReadClear();
+  void binaryReadMark(std::string name);
+  std::vector<std::string> clearExpiredMarks();
 
   void lockAudioBuffer(void)
   {
@@ -121,6 +124,12 @@ public:
   void operator=(const AudioPipe &) = delete;
 
 private:
+  typedef struct
+  {
+    std::string name;
+    uint32_t buffer_index;
+  } audio_mark_t;
+
   static int lws_callback(struct lws *wsi, enum lws_callback_reasons reason, void *user, void *in, size_t len);
   static unsigned int nchild;
   static struct lws_context *contexts[];
@@ -169,6 +178,7 @@ private:
 
   // Stores data coming from the external socket server
   lockfree::spsc::RingBuf<uint8_t, MAX_AUDIO_BUFFER> m_audio_buffer_in;
+  std::vector<audio_mark_t> m_marks;
 
   uint8_t *m_recv_buf;
   uint8_t *m_recv_buf_ptr;
