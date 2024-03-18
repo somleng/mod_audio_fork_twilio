@@ -38,77 +38,85 @@ namespace
   {
     std::string msg = message;
     std::string type;
-    cJSON *json = parse_json(session, msg, type);
+    std::string streamSid;
+    cJSON *json = parse_json(session, msg, type, streamSid);
     if (json)
     {
-      if (0 == type.compare("media"))
+      if (0 == streamSid.compare(tech_pvt->sessionId))
       {
-        cJSON *jsonData = cJSON_GetObjectItem(json, "media");
-        if (jsonData)
+        if (0 == type.compare("media"))
         {
-          const char *payload = cJSON_GetObjectCstr(jsonData, "payload");
-          if (payload)
+          cJSON *jsonData = cJSON_GetObjectItem(json, "media");
+          if (jsonData)
           {
-            std::string rawAudio = drachtio::base64_decode(payload);
-            AudioPipe *pAudioPipe = static_cast<AudioPipe *>(tech_pvt->pAudioPipe);
-            pAudioPipe->lockAudioBuffer();
-            size_t available = pAudioPipe->binaryReadSpaceAvailable();
-            int num_samples_8 = rawAudio.length();
-            if (num_samples_8 <= (available * 2))
+            const char *payload = cJSON_GetObjectCstr(jsonData, "payload");
+            if (payload)
             {
-              for (int i = 0; i < num_samples_8; i++)
-              {
-                int16_t sample = ulaw_to_linear(rawAudio.at(i));
-                uint8_t buf[2];
-                memcpy(buf, &sample, sizeof(int16_t));
-                pAudioPipe->binaryReadPush(buf, sizeof(int16_t));
-              }
-            }
-            else
-            {
-              switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_ERROR, "(%u) dropping incoming packets!\n",
-                                tech_pvt->id);
-            }
-            pAudioPipe->unlockAudioBuffer();
-          }
-        }
-      }
-      else if (0 == type.compare("mark"))
-      {
-        cJSON *jsonData = cJSON_GetObjectItem(json, "mark");
-        if (jsonData)
-        {
-          const char *name = cJSON_GetObjectCstr(jsonData, "name");
-          if (name)
-          {
-            AudioPipe *pAudioPipe = static_cast<AudioPipe *>(tech_pvt->pAudioPipe);
-            if (pAudioPipe != nullptr)
-            {
+              std::string rawAudio = drachtio::base64_decode(payload);
+              AudioPipe *pAudioPipe = static_cast<AudioPipe *>(tech_pvt->pAudioPipe);
               pAudioPipe->lockAudioBuffer();
-              pAudioPipe->binaryReadMark(name);
+              size_t available = pAudioPipe->binaryReadSpaceAvailable();
+              int num_samples_8 = rawAudio.length();
+              if (num_samples_8 <= (available * 2))
+              {
+                for (int i = 0; i < num_samples_8; i++)
+                {
+                  int16_t sample = ulaw_to_linear(rawAudio.at(i));
+                  uint8_t buf[2];
+                  memcpy(buf, &sample, sizeof(int16_t));
+                  pAudioPipe->binaryReadPush(buf, sizeof(int16_t));
+                }
+              }
+              else
+              {
+                switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_ERROR, "(%u) dropping incoming packets!\n",
+                                  tech_pvt->id);
+              }
               pAudioPipe->unlockAudioBuffer();
             }
           }
         }
-      }
-      else if (0 == type.compare("clear"))
-      {
-        AudioPipe *pAudioPipe = static_cast<AudioPipe *>(tech_pvt->pAudioPipe);
-        TwilioHelper *pTwilioHelper = static_cast<TwilioHelper *>(tech_pvt->pTwilioHelper);
-        if (pAudioPipe != nullptr && pTwilioHelper != nullptr)
+        else if (0 == type.compare("mark"))
         {
-          pAudioPipe->lockAudioBuffer();
-          pAudioPipe->binaryReadClear();
-          auto marks = pAudioPipe->clearExpiredMarks();
-          for (int i = 0; i < marks.size(); i++)
-            pTwilioHelper->mark(pAudioPipe, marks[i]);
+          cJSON *jsonData = cJSON_GetObjectItem(json, "mark");
+          if (jsonData)
+          {
+            const char *name = cJSON_GetObjectCstr(jsonData, "name");
+            if (name)
+            {
+              AudioPipe *pAudioPipe = static_cast<AudioPipe *>(tech_pvt->pAudioPipe);
+              if (pAudioPipe != nullptr)
+              {
+                pAudioPipe->lockAudioBuffer();
+                pAudioPipe->binaryReadMark(name);
+                pAudioPipe->unlockAudioBuffer();
+              }
+            }
+          }
+        }
+        else if (0 == type.compare("clear"))
+        {
+          AudioPipe *pAudioPipe = static_cast<AudioPipe *>(tech_pvt->pAudioPipe);
+          TwilioHelper *pTwilioHelper = static_cast<TwilioHelper *>(tech_pvt->pTwilioHelper);
+          if (pAudioPipe != nullptr && pTwilioHelper != nullptr)
+          {
+            pAudioPipe->lockAudioBuffer();
+            pAudioPipe->binaryReadClear();
+            auto marks = pAudioPipe->clearExpiredMarks();
+            for (int i = 0; i < marks.size(); i++)
+              pTwilioHelper->mark(pAudioPipe, marks[i]);
 
-          pAudioPipe->unlockAudioBuffer();
+            pAudioPipe->unlockAudioBuffer();
+          }
+        }
+        else
+        {
+          switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "(%u) processIncomingMessage - unsupported msg type %s\n", tech_pvt->id, type.c_str());
         }
       }
       else
       {
-        switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "(%u) processIncomingMessage - unsupported msg type %s\n", tech_pvt->id, type.c_str());
+        switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "(%u) processIncomingMessage - session id doesn't match %s != %s\n", tech_pvt->id, tech_pvt->sessionId, streamSid.c_str());
       }
       cJSON_Delete(json);
     }
@@ -183,7 +191,7 @@ namespace
   }
   switch_status_t fork_data_init(private_t *tech_pvt, switch_core_session_t *session, char *host,
                                  unsigned int port, char *path, int sslFlags, int sampling, int desiredSampling, int channels,
-                                 char *account_sid, char *call_sid, const char *bugname, char *metadata, responseHandler_t responseHandler)
+                                 char *account_sid, char *call_sid, const char *bugname, responseHandler_t responseHandler)
   {
 
     const char *username = nullptr;
@@ -205,15 +213,14 @@ namespace
     strncpy(tech_pvt->host, host, MAX_WS_URL_LEN);
     tech_pvt->port = port;
     strncpy(tech_pvt->path, path, MAX_PATH_LEN);
-    tech_pvt->sampling = desiredSampling;
+    tech_pvt->sampling = sampling;
+    tech_pvt->desiredSampling = desiredSampling;
     tech_pvt->responseHandler = responseHandler;
     tech_pvt->channels = channels;
     tech_pvt->id = ++idxCallCount;
     tech_pvt->buffer_overrun_notified = 0;
     tech_pvt->audio_paused = 0;
     tech_pvt->graceful_shutdown = 0;
-    if (metadata)
-      strncpy(tech_pvt->initialMetadata, metadata, MAX_METADATA_LEN);
 
     size_t buflen = LWS_PRE + (FRAME_SIZE_8000 * desiredSampling / 8000 * channels * 1000 / RTP_PACKETIZATION_PERIOD * nAudioBufferSecs);
 
@@ -245,7 +252,14 @@ namespace
       return SWITCH_STATUS_FALSE;
 
       switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_DEBUG, "(%u) resampling from %u to %u\n", tech_pvt->id, sampling, desiredSampling);
-      tech_pvt->resampler = speex_resampler_init(channels, sampling, desiredSampling, SWITCH_RESAMPLE_QUALITY, &err);
+      tech_pvt->resampler_out = speex_resampler_init(channels, sampling, desiredSampling, SWITCH_RESAMPLE_QUALITY, &err);
+      if (0 != err)
+      {
+        switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_ERROR, "Error initializing resampler: %s.\n", speex_resampler_strerror(err));
+        return SWITCH_STATUS_FALSE;
+      }
+
+      tech_pvt->resampler_in = speex_resampler_init(channels, desiredSampling, sampling, SWITCH_RESAMPLE_QUALITY, &err);
       if (0 != err)
       {
         switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_ERROR, "Error initializing resampler: %s.\n", speex_resampler_strerror(err));
@@ -265,10 +279,15 @@ namespace
   void destroy_tech_pvt(private_t *tech_pvt)
   {
     switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_INFO, "%s (%u) destroy_tech_pvt\n", tech_pvt->sessionId, tech_pvt->id);
-    if (tech_pvt->resampler)
+    if (tech_pvt->resampler_out)
     {
-      speex_resampler_destroy(tech_pvt->resampler);
-      tech_pvt->resampler = nullptr;
+      speex_resampler_destroy(tech_pvt->resampler_out);
+      tech_pvt->resampler_out = nullptr;
+    }
+    if (tech_pvt->resampler_in)
+    {
+      speex_resampler_destroy(tech_pvt->resampler_in);
+      tech_pvt->resampler_in = nullptr;
     }
     if (tech_pvt->mutex)
     {
@@ -364,11 +383,6 @@ extern "C"
     std::smatch matches;
     if (std::regex_search(strHost, matches, re))
     {
-      /*
-      for (int i = 0; i < matches.length(); i++) {
-        switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_NOTICE, "parse_ws_uri - %d: %s\n", i, matches[i].str().c_str());
-      }
-      */
       strncpy(host, matches[1].str().c_str(), MAX_WS_URL_LEN);
       if (matches[2].str().length() > 0)
       {
@@ -430,7 +444,6 @@ extern "C"
                                     char *account_sid,
                                     char *call_sid,
                                     char *bugname,
-                                    char *metadata,
                                     void **ppUserData)
   {
     switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_DEBUG, "mod_audio_fork_twilio: fork_session_init\n");
@@ -444,7 +457,7 @@ extern "C"
       return SWITCH_STATUS_FALSE;
     }
     if (SWITCH_STATUS_SUCCESS != fork_data_init(tech_pvt, session, host, port, path, sslFlags, samples_per_second, sampling, channels,
-                                                account_sid, call_sid, bugname, metadata, responseHandler))
+                                                account_sid, call_sid, bugname, responseHandler))
     {
       destroy_tech_pvt(tech_pvt);
       return SWITCH_STATUS_FALSE;
@@ -462,7 +475,7 @@ extern "C"
     return SWITCH_STATUS_SUCCESS;
   }
 
-  switch_status_t fork_session_cleanup(switch_core_session_t *session, const char *bugname, char *text, int channelIsClosing)
+  switch_status_t fork_session_cleanup(switch_core_session_t *session, const char *bugname, int channelIsClosing)
   {
     switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_DEBUG, "mod_audio_fork_twilio: fork_session_cleanup\n");
     switch_channel_t *channel = switch_core_session_get_channel(session);
@@ -502,8 +515,6 @@ extern "C"
       pTwilioHelper->stop(pAudioPipe);
     }
 
-    if (pAudioPipe && text)
-      pAudioPipe->bufferForSending(text);
     if (pAudioPipe)
       pAudioPipe->close();
 
@@ -613,7 +624,7 @@ extern "C"
 
       pAudioPipe->lockAudioBuffer();
       size_t available = pAudioPipe->binaryWriteSpaceAvailable();
-      if (NULL == tech_pvt->resampler)
+      if (NULL == tech_pvt->resampler_out)
       {
         switch_frame_t frame = {0};
         frame.data = pAudioPipe->binaryWritePtr();
@@ -661,7 +672,7 @@ extern "C"
             spx_uint32_t out_len = available >> 1; // space for samples which are 2 bytes
             spx_uint32_t in_len = frame.samples;
 
-            speex_resampler_process_interleaved_int(tech_pvt->resampler,
+            speex_resampler_process_interleaved_int(tech_pvt->resampler_out,
                                                     (const spx_int16_t *)frame.data,
                                                     (spx_uint32_t *)&in_len,
                                                     (spx_int16_t *)((char *)pAudioPipe->binaryWritePtr()),
@@ -716,7 +727,23 @@ extern "C"
       frame = switch_core_media_bug_get_write_replace_frame(bug);
       if (frame)
       {
-        auto num_samples = pAudioPipe->binaryReadPop((uint8_t *)frame->data, frame->datalen);
+        int num_samples = 0;
+        if (NULL == tech_pvt->resampler_in)
+        {
+          num_samples = pAudioPipe->binaryReadPop((uint8_t *)frame->data, frame->datalen);
+        }
+        else
+        {
+          auto sample_ratio = ((float)tech_pvt->desiredSampling) / ((float)tech_pvt->sampling);
+          num_samples = pAudioPipe->binaryReadPop((uint8_t *)frame->data, frame->samples * 2 * sample_ratio);
+          spx_uint32_t in_len = num_samples * 2; // space for samples which are 2 bytes
+          spx_uint32_t out_len = frame->samples;
+          speex_resampler_process_interleaved_int(tech_pvt->resampler_in,
+                                                  (const spx_int16_t *)frame->data,
+                                                  (spx_uint32_t *)&in_len,
+                                                  (spx_int16_t *)((char *)frame->data),
+                                                  &out_len);
+        }
         if (num_samples > 0)
         {
           switch_core_media_bug_set_write_replace_frame(bug, frame);

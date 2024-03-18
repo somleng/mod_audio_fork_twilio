@@ -36,7 +36,8 @@ typedef void (*responseHandler_t)(switch_core_session_t* session, const char* ev
 struct private_data {
 	switch_mutex_t *mutex;
 	char sessionId[MAX_SESSION_ID];
-  SpeexResamplerState *resampler;
+  SpeexResamplerState *resampler_out;
+  SpeexResamplerState *resampler_in;
   responseHandler_t responseHandler;
   void *pAudioPipe;
   void *pTwilioHelper;
@@ -44,7 +45,8 @@ struct private_data {
   char host[MAX_WS_URL_LEN];
   unsigned int port;
   char path[MAX_PATH_LEN];
-  int sampling;
+  int sampling; //call sample rate
+  int desiredSampling; //twilio sample rate
   int  channels;
   unsigned int id;
   int buffer_overrun_notified:1;

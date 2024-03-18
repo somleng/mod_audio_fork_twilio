@@ -63,7 +63,7 @@ static switch_bool_t capture_callback(switch_media_bug_t *bug, void *user_data, 
 	case SWITCH_ABC_TYPE_CLOSE:
 	{
 		switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_INFO, "Got SWITCH_ABC_TYPE_CLOSE for bug %s\n", BUG_NAME);
-		fork_session_cleanup(session, BUG_NAME, NULL, 1);
+		fork_session_cleanup(session, BUG_NAME, 1);
 
 		switch_core_event_hook_remove_recv_dtmf(session, on_dtmf);
 	}
@@ -92,8 +92,7 @@ static switch_status_t start_capture(switch_core_session_t *session,
 									 int sslFlags,
 									 char *account_sid,
 									 char *call_sid,
-									 const char *bugname,
-									 char *metadata)
+									 const char *bugname)
 {
 	switch_channel_t *channel = switch_core_session_get_channel(session);
 	switch_media_bug_t *bug;
@@ -124,7 +123,7 @@ static switch_status_t start_capture(switch_core_session_t *session,
 	switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_DEBUG, "calling fork_session_init.\n");
 	if (SWITCH_STATUS_FALSE == fork_session_init(session, responseHandler, read_codec->implementation->actual_samples_per_second,
 												 host, port, path, sampling, sslFlags, channels, account_sid,
-												 call_sid, bugname, metadata, &pUserData))
+												 call_sid, bugname, &pUserData))
 	{
 		switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_ERROR, "Error initializing mod_audio_fork_twilio session.\n");
 		return SWITCH_STATUS_FALSE;
@@ -147,19 +146,12 @@ static switch_status_t start_capture(switch_core_session_t *session,
 	return SWITCH_STATUS_SUCCESS;
 }
 
-static switch_status_t do_stop(switch_core_session_t *session, const char *bugname, char *text)
+static switch_status_t do_stop(switch_core_session_t *session, const char *bugname)
 {
 	switch_status_t status = SWITCH_STATUS_SUCCESS;
 
-	if (text)
-	{
-		switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_INFO, "mod_audio_fork_twilio (%s): stop w/ final text %s\n", bugname, text);
-	}
-	else
-	{
-		switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_INFO, "mod_audio_fork_twilio (%s): stop\n", bugname);
-	}
-	status = fork_session_cleanup(session, bugname, text, 0);
+	switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_INFO, "mod_audio_fork_twilio (%s): stop\n", bugname);
+	status = fork_session_cleanup(session, bugname, 0);
 
 	return status;
 }
@@ -184,7 +176,7 @@ static switch_status_t do_graceful_shutdown(switch_core_session_t *session, cons
 	return status;
 }
 
-#define FORK_API_SYNTAX "<uuid> [start | stop | pause | resume | graceful-shutdown ] [wss-url | path] [accountSid] [callSid] [bugname] [metadata]"
+#define FORK_API_SYNTAX "<uuid> [start | stop | pause | resume | graceful-shutdown ] [wss-url | path] [accountSid] [callSid]"
 SWITCH_STANDARD_API(fork_function)
 {
 	char *mycmd = NULL, *argv[7] = {0};
@@ -217,18 +209,7 @@ SWITCH_STANDARD_API(fork_function)
 		{
 			if (!strcasecmp(argv[1], "stop"))
 			{
-				char *text = NULL;
-				if (argc > 3)
-				{
-
-					text = argv[3];
-				}
-				else if (argc > 2)
-				{
-					if (argv[2][0] == '{' || argv[2][0] == '[')
-						text = argv[2];
-				}
-				status = do_stop(lsession, bugname, text);
+				status = do_stop(lsession, bugname);
 			}
 			else if (!strcasecmp(argv[1], "pause"))
 			{
@@ -251,23 +232,9 @@ SWITCH_STANDARD_API(fork_function)
 				int sslFlags;
 				int sampling = 8000;
 				switch_media_bug_flag_t flags = SMBF_READ_STREAM;
-				char *metadata = NULL;
 
-				if (argc > 4)
-				{
-					// account_sid = argv[3];
-					// call_sid = argv[4];
-				}
-
-				if (argc > 6)
-				{
-					metadata = argv[6];
-				}
-				else if (argc > 5)
-				{
-					if (argv[5][0] == '{' || argv[5][0] == '[')
-						metadata = argv[5];
-				}
+				account_sid = argv[3];
+				call_sid = argv[4];
 
 				// Should always be mixed
 				flags |= SMBF_WRITE_STREAM;
@@ -283,7 +250,7 @@ SWITCH_STANDARD_API(fork_function)
 				{
 					switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_ERROR, "invalid sample rate: %s\n", argv[4]);
 				}
-				status = start_capture(lsession, flags, host, port, path, sampling, sslFlags, account_sid, call_sid, bugname, metadata);
+				status = start_capture(lsession, flags, host, port, path, sampling, sslFlags, account_sid, call_sid, bugname);
 			}
 			else
 			{
@@ -335,7 +302,6 @@ SWITCH_MODULE_LOAD_FUNCTION(mod_audio_fork_twilio_load)
 	}
 
 	SWITCH_ADD_API(api_interface, "uuid_audio_fork_twilio", "audio_fork API", fork_function, FORK_API_SYNTAX);
-	switch_console_set_complete("add uuid_audio_fork_twilio start wss-url metadata");
 	switch_console_set_complete("add uuid_audio_fork_twilio start wss-url");
 	switch_console_set_complete("add uuid_audio_fork_twilio stop");
 

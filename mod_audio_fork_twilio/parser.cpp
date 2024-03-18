@@ -1,11 +1,12 @@
 #include "parser.hpp"
 #include <switch.h>
 
-cJSON *parse_json(switch_core_session_t *session, const std::string &data, std::string &type)
+cJSON *parse_json(switch_core_session_t *session, const std::string &data, std::string &type, std::string &sessionId)
 {
   cJSON *json = NULL;
-  const char *szType = NULL;
   const char *szEvent = NULL;
+  const char *szSId = NULL;
+
   json = cJSON_Parse(data.c_str());
   if (!json)
   {
@@ -14,9 +15,15 @@ cJSON *parse_json(switch_core_session_t *session, const std::string &data, std::
   }
 
   szEvent = cJSON_GetObjectCstr(json, "event");
- if (szEvent)
+  if (szEvent)
   {
     type.assign(szEvent);
+  }
+
+  szSId = cJSON_GetObjectCstr(json, "streamSid");
+  if (szSId)
+  {
+    sessionId.assign(szSId);
   }
   return json;
 }
